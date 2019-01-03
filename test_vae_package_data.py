@@ -3,6 +3,7 @@ import tensorflow as tf
 import logging
 from aelib.vae import VariationalAutoEncoder
 from aelib.utils import *
+from scipy import sparse
 
 if __name__ == '__main__':
     # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
@@ -15,15 +16,18 @@ if __name__ == '__main__':
 
     logging.info('loading data')
 
-    content_matrix_file = open('content_matrix.npy', 'rb')
-    data = np.load(content_matrix_file)
-    content_matrix_file.close()
+#     content_matrix_file = open('content_matrix.npy', 'rb')
+    # data = np.load(content_matrix_file)
+    # content_matrix_file.close()
+    csr_sparse = sparse.load_npz('/home/hadoop/CVAE/content_matrix_new.npz')
+    # csr_sparse = sparse.load_npz('content_matrix_new.npz')
+    data = csr_sparse.toarray()
 
     idx = np.random.rand(data.shape[0]) < 0.8
     train_X = data[idx]
     test_X = data[~idx]
     logging.info('initializing sdae model')
-    model = VariationalAutoEncoder(input_dim=33348, dims=[200, 100], z_dim=50,
+    model = VariationalAutoEncoder(input_dim=37617, dims=[200, 100], z_dim=50,
                                    activations=['sigmoid', 'sigmoid'], epoch=[50, 50],
                                    noise='mask-0.3', loss='cross-entropy', lr=0.01, batch_size=64, print_step=1)
     logging.info('fitting data starts...')

@@ -1,11 +1,12 @@
 import numpy as np
+import os
 import logging
 
 def init_logging(log_path):
     log = logging.getLogger()
     log.setLevel(logging.INFO)
     logFormatter = logging.Formatter('%(asctime)s [%(levelname)s]: %(message)s')
-    
+
     fileHandler = logging.FileHandler(log_path)
     fileHandler.setFormatter(logFormatter)
     log.addHandler(fileHandler)
@@ -17,7 +18,7 @@ def init_logging(log_path):
 def get_batch(X, size):
     ids = np.random.choice(len(X), size, replace=False)
     return (X[ids], ids)
-        
+
 def noise_validator(noise, allowed_noises):
     '''Validates the noise provided'''
     try:
@@ -32,3 +33,10 @@ def noise_validator(noise, allowed_noises):
     except:
         return False
     pass
+
+
+def zipdir(path, ziph):
+    # ziph is zipfile handle
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            ziph.write(os.path.join(root, file))

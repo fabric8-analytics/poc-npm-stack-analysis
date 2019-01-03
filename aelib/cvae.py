@@ -1,11 +1,15 @@
 import numpy as np
-import utils as utils
+import aelib.utils as utils
 import tensorflow as tf
 import sys
 import math
 import scipy
 import scipy.io
 import logging
+
+from aelib import config
+from aelib.s3_data_store import S3DataStore
+
 
 class Params:
     """Parameters for DMF
@@ -47,6 +51,8 @@ class CVAE:
         self.n_z = n_z
         self.weights = []
         self.reg_loss = 0
+        self.s3_client = S3DataStore(config.bucket_name, config.access_key,
+                                     config.secret_key)
 
         self.x = tf.placeholder(tf.float32, [None, self.input_dim], name='x')
         self.v = tf.placeholder(tf.float32, [None, self.m_num_factors])
@@ -193,7 +199,7 @@ class CVAE:
             VVT = np.dot(v.T, v)
             XX = VVT * params.b + np.eye(self.m_num_factors) * params.lambda_u
 
-            for i in xrange(self.m_num_users):
+            for i in range(self.m_num_users):
                 item_ids = users[i]
                 n = len(item_ids)
                 if n > 0:
@@ -208,7 +214,7 @@ class CVAE:
             ids = np.array([len(x) for x in users]) > 0
             u = self.m_U[ids]
             XX = np.dot(u.T, u) * params.b
-            for j in xrange(self.m_num_items):
+            for j in range(self.m_num_items):
                 user_ids = items[j]
                 m = len(user_ids)
                 if m>0 :
@@ -326,11 +332,24 @@ class CVAE:
                 epoch, loss, -likelihood, gen_loss))
 
     def save_model(self, weight_path, pmf_path=None):
-        self.saver.save(self.sess, weight_path)
-        logging.info("Weights saved at " + weight_path)
+        from pathlib import Path
+        path_o = Path()
+
+        weight_folder = path_o.home().joinpath("weights/train")
+        weight_folder.parent.mkdir(parents=True)
+        weight_path = path_o.home().joinpath(weight_path)
+        local_path = str(weight_path.absolute())
+
+        self.saver.save(self.sess, local_path)
+        logging.info("Weights saved at {}".format(local_path))
+
         if pmf_path is not None:
-            scipy.io.savemat(pmf_path,{"m_U": self.m_U, "m_V": self.m_V, "m_theta": self.m_theta})
-            logging.info("Weights saved at " + pmf_path)
+            pmf_path = path_o.home().joinpath(pmf_path)
+            scipy.io.savemat(str(pmf_path.absolute()),
+                             {"m_U": self.m_U, "m_V": self.m_V, "m_theta": self.m_theta})
+            logging.info("Matrices saved at " + str(pmf_path.absolute()))
+
+        self.s3_client.upload_folder_to_s3((weight_folder.absolute()), "weights/train/")
 
     def load_model(self, weight_path, pmf_path=None):
         logging.info("Loading weights from " + weight_path)

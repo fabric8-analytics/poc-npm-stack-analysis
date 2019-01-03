@@ -1,18 +1,20 @@
 import numpy as np
-import utils as utils
+import aelib.utils as utils
 import tensorflow as tf
 import logging
+import aelib.config as config
+from aelib.s3_data_store import S3DataStore
+
 
 allowed_activations = ['sigmoid', 'tanh', 'softmax', 'relu', 'linear']
 allowed_noises = [None, 'gaussian', 'mask']
 allowed_losses = ['rmse', 'cross-entropy']
 
-
 def xavier_init(fan_in, fan_out, dtype=tf.float32, constant=1):
     """ Xavier initialization of network weights"""
     # https://stackoverflow.com/questions/33640581/how-to-do-xavier-initialization-on-tensorflow
-    low = -constant * np.sqrt(6.0 / (fan_in + fan_out))
-    high = constant * np.sqrt(6.0 / (fan_in + fan_out))
+    low = -constant*np.sqrt(6.0/(fan_in + fan_out))
+    high = constant*np.sqrt(6.0/(fan_in + fan_out))
     return tf.random_uniform((fan_in, fan_out),
                              minval=low, maxval=high,
                              dtype=tf.float32)
@@ -53,9 +55,9 @@ class VariationalAutoEncoder:
         self.n_z = z_dim
         self.input_dim = input_dim
         self.weights, self.biases = [], []
-        # Decoder weights and decoder biases.
         self.de_weights, self.de_biases = [], []
-
+        self.s3_client = S3DataStore(config.bucket_name, config.access_key,
+                                     config.secret_key)
     def add_noise(self, x):
         if self.noise == 'gaussian':
             n = np.random.normal(0, 0.1, (len(x), len(x[0])))
@@ -78,23 +80,22 @@ class VariationalAutoEncoder:
             x = self.run(data_x=x,
                          activation=self.activations[i],
                          hidden_dim=self.dims[i],
-                         epoch=self.epoch[i], loss=self.loss,
+                         epoch=self.epoch[
+                             i], loss=self.loss,
                          batch_size=self.batch_size,
-                         lr=self.lr,
-                         print_step=self.print_step)
+                         lr=self.lr, print_step=self.print_step)
         # fit latent layer
         self.run_latent(data_x=x, hidden_dim=self.n_z, batch_size=self.batch_size,
-                        lr=self.lr, epoch=50, print_step=self.print_step)
+            lr=self.lr, epoch=50, print_step=self.print_step)
         self.run_all(data_x=data_x, lr=self.lr, batch_size=self.batch_size,
-                     epoch=100, print_step=self.print_step, x_valid=x_valid)
+            epoch=100, print_step=self.print_step, x_valid=x_valid)
 
     def transform(self, data):
         tf.reset_default_graph()
         sess = tf.Session()
         # x = tf.constant(data, dtype=tf.float32)
         input_dim = len(data[0])
-        data_x = tf.placeholder(dtype=tf.float32, shape=[
-                                None, input_dim], name='x')
+        data_x = tf.placeholder(dtype=tf.float32, shape=[None, input_dim], name='x')
         x = data_x
         for w, b, a in zip(self.weights, self.biases, self.activations):
             weight = tf.constant(w, dtype=tf.float32)
@@ -103,6 +104,7 @@ class VariationalAutoEncoder:
             x = self.activate(layer, a)
         return sess.run(x, feed_dict={data_x: data})
         # return x.eval(session=sess)
+
 
     def fit_transform(self, x):
         self.fit(x)
@@ -115,25 +117,25 @@ class VariationalAutoEncoder:
         num_iter = int(n / batch_size)
         with tf.variable_scope("inference"):
             rec = {'W1': tf.get_variable("W1", initializer=tf.constant(self.weights[0]), dtype=tf.float32),
-                   'b1': tf.get_variable("b1", initializer=tf.constant(self.biases[0]), dtype=tf.float32),
-                   'W2': tf.get_variable("W2", initializer=tf.constant(self.weights[1]), dtype=tf.float32),
-                   'b2': tf.get_variable("b2", initializer=tf.constant(self.biases[1]), dtype=tf.float32),
-                   'W_z_mean': tf.get_variable("W_z_mean", initializer=tf.constant(self.weights[2]), dtype=tf.float32),
-                   'b_z_mean': tf.get_variable("b_z_mean", initializer=tf.constant(self.biases[2]), dtype=tf.float32),
-                   'W_z_log_sigma': tf.get_variable("W_z_log_sigma", initializer=tf.constant(self.weights[3]), dtype=tf.float32),
-                   'b_z_log_sigma': tf.get_variable("b_z_log_sigma", initializer=tf.constant(self.biases[3]), dtype=tf.float32)}
+                'b1': tf.get_variable("b1", initializer=tf.constant(self.biases[0]), dtype=tf.float32),
+                'W2': tf.get_variable("W2", initializer=tf.constant(self.weights[1]), dtype=tf.float32),
+                'b2': tf.get_variable("b2", initializer=tf.constant(self.biases[1]), dtype=tf.float32),
+                'W_z_mean': tf.get_variable("W_z_mean", initializer=tf.constant(self.weights[2]), dtype=tf.float32),
+                'b_z_mean': tf.get_variable("b_z_mean", initializer=tf.constant(self.biases[2]), dtype=tf.float32),
+                'W_z_log_sigma': tf.get_variable("W_z_log_sigma", initializer=tf.constant(self.weights[3]), dtype=tf.float32),
+                'b_z_log_sigma': tf.get_variable("b_z_log_sigma", initializer=tf.constant(self.biases[3]), dtype=tf.float32)}
 
         with tf.variable_scope("generation"):
             gen = {'W2': tf.get_variable("W2", initializer=tf.constant(self.de_weights[2]), dtype=tf.float32),
-                   'b2': tf.get_variable("b2", initializer=tf.constant(self.de_biases[2]), dtype=tf.float32),
-                   'W1': tf.transpose(rec['W2']),
-                   'b1': rec['b1'],
-                   'W_x': tf.transpose(rec['W1']),
-                   'b_x': tf.get_variable("b_x", [input_dim],
-                                          initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
+                'b2': tf.get_variable("b2", initializer=tf.constant(self.de_biases[2]), dtype=tf.float32),
+                'W1': tf.transpose(rec['W2']),
+                'b1': rec['b1'],
+                'W_x': tf.transpose(rec['W1']),
+                'b_x': tf.get_variable("b_x", [input_dim],
+                    initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
         weights = []
         weights += [rec['W1'], rec['b1'], rec['W2'], rec['b2'], rec['W_z_mean'],
-                    rec['b_z_mean'], rec['W_z_log_sigma'], rec['b_z_log_sigma']]
+                        rec['b_z_mean'], rec['W_z_log_sigma'], rec['b_z_log_sigma']]
         weights += [gen['W2'], gen['b2'], gen['b_x']]
         saver = tf.train.Saver(weights)
 
@@ -143,9 +145,8 @@ class VariationalAutoEncoder:
         h2 = self.activate(
             tf.matmul(h1, rec['W2']) + rec['b2'], self.activations[1])
         z_mean = tf.matmul(h2, rec['W_z_mean']) + rec['b_z_mean']
-        z_log_sigma_sq = tf.matmul(
-            h2, rec['W_z_log_sigma']) + rec['b_z_log_sigma']
-        eps = tf.random_normal((batch_size, self.n_z), 0, 1, dtype=tf.float32)
+        z_log_sigma_sq = tf.matmul(h2, rec['W_z_log_sigma']) + rec['b_z_log_sigma']
+        eps = tf.random_normal((batch_size, self.n_z), 0, 1,dtype=tf.float32)
         z = z_mean + tf.sqrt(tf.maximum(tf.exp(z_log_sigma_sq), 1e-10)) * eps
         h2 = self.activate(
             tf.matmul(z, gen['W2']) + gen['b2'], self.activations[1])
@@ -154,9 +155,9 @@ class VariationalAutoEncoder:
         x_recon = tf.matmul(h1, gen['W_x']) + gen['b_x']
         x_recon = tf.nn.sigmoid(x_recon, name='x_recon')
         gen_loss = -tf.reduce_mean(tf.reduce_sum(x * tf.log(tf.maximum(x_recon, 1e-10))
-                                                 + (1 - x) * tf.log(tf.maximum(1 - x_recon, 1e-10)), 1))
+            + (1-x) * tf.log(tf.maximum(1 - x_recon, 1e-10)),1))
         latent_loss = 0.5 * tf.reduce_mean(tf.reduce_sum(tf.square(z_mean) + tf.exp(z_log_sigma_sq)
-                                                         - z_log_sigma_sq - 1, 1))
+            - z_log_sigma_sq - 1, 1))
         loss = gen_loss + latent_loss
         train_op = tf.train.AdamOptimizer(lr).minimize(loss)
 
@@ -165,29 +166,30 @@ class VariationalAutoEncoder:
         for i in range(epoch):
             for it in range(num_iter):
                 b_x, ids = utils.get_batch(data_x, batch_size)
-                _, l, gl, ll = sess.run(
-                    (train_op, loss, gen_loss, latent_loss), feed_dict={x: b_x})
+                _, l, gl, ll = sess.run((train_op, loss, gen_loss, latent_loss), feed_dict={x: b_x})
             if (i + 1) % print_step == 0:
                 if x_valid is None:
-                    logging.info(
-                        'epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}'.format(i, l, gl, ll))
+                    logging.info('epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}'.format(i, l, gl, ll))
                 else:
-                    valid_loss = self.validation(
-                        x_valid, sess, gen_loss, x, batch_size)
-                    logging.info('epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}, valid_loss={4}'.format(
-                        i, l, gl, ll, valid_loss))
+                    valid_loss = self.validation(x_valid, sess, gen_loss, x, batch_size)
+                    logging.info('epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}, valid_loss={4}'.format(i, l, gl, ll, valid_loss))
 
-        weight_path = "model/pretrain"
-        saver.save(sess, weight_path)
-        logging.info("Weights saved at " + weight_path)
+        from pathlib import Path
+        path_o = Path()
+        weight_path = path_o.cwd().joinpath("weights/pretrain")
+        weight_folder = path_o.cwd().joinpath("weights")
+        local_path = str(weight_path.absolute())
+        saver.save(sess, local_path)
+        logging.info("Weights saved at {}".format(local_path))
+        self.s3_client.upload_folder_to_s3((weight_folder.absolute()), "weights/pretrain")
 
     def validation(self, data_x, sess, gen_loss, x, batch_size):
         n_samples = data_x.shape[0]
-        num_batches = int(1.0 * n_samples / self.batch_size)
+        num_batches = int(1.0*n_samples/self.batch_size)
         n_samples = num_batches * batch_size
         valid_loss = 0.
         for i in range(num_batches):
-            ids = range(i * batch_size, (i + 1) * batch_size)
+            ids = range(i*batch_size, (i+1)*batch_size)
             x_b = data_x[ids]
             gl = sess.run(gen_loss, feed_dict={x: x_b})
             valid_loss += gl / n_samples * batch_size
@@ -199,42 +201,38 @@ class VariationalAutoEncoder:
         input_dim = len(data_x[0])
         num_iter = int(n / batch_size)
         sess = tf.Session()
-        rec = {'W_z_mean': tf.get_variable("W_z_mean", [self.dims[1], self.n_z],
-                                           initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
-               'b_z_mean': tf.get_variable("b_z_mean", [self.n_z],
-                                           initializer=tf.constant_initializer(0.0), dtype=tf.float32),
-               'W_z_log_sigma': tf.get_variable("W_z_log_sigma", [self.dims[1], self.n_z],
-                                                initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
-               'b_z_log_sigma': tf.get_variable("b_z_log_sigma", [self.n_z],
-                                                initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
+        rec = { 'W_z_mean': tf.get_variable("W_z_mean", [self.dims[1], self.n_z],
+                    initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
+                'b_z_mean': tf.get_variable("b_z_mean", [self.n_z],
+                    initializer=tf.constant_initializer(0.0), dtype=tf.float32),
+                'W_z_log_sigma': tf.get_variable("W_z_log_sigma", [self.dims[1], self.n_z],
+                    initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
+                'b_z_log_sigma': tf.get_variable("b_z_log_sigma", [self.n_z],
+                    initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
         gen = {'W2': tf.get_variable("W2", [self.n_z, self.dims[1]],
-                                     initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
-               'b2': tf.get_variable("b2", [self.dims[1]],
-                                     initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
+                    initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32),
+                'b2': tf.get_variable("b2", [self.dims[1]],
+                    initializer=tf.constant_initializer(0.0), dtype=tf.float32)}
         x = tf.placeholder(dtype=tf.float32, shape=[None, input_dim], name='x')
         z_mean = tf.matmul(x, rec['W_z_mean']) + rec['b_z_mean']
-        z_log_sigma_sq = tf.matmul(
-            x, rec['W_z_log_sigma']) + rec['b_z_log_sigma']
-        eps = tf.random_normal((batch_size, hidden_dim),
-                               0, 1, dtype=tf.float32)
+        z_log_sigma_sq = tf.matmul(x, rec['W_z_log_sigma']) + rec['b_z_log_sigma']
+        eps = tf.random_normal((batch_size, hidden_dim), 0, 1,dtype=tf.float32)
         z = z_mean + tf.sqrt(tf.maximum(tf.exp(z_log_sigma_sq), 1e-10)) * eps
         x_recon = tf.matmul(z, gen['W2']) + gen['b2']
         x_recon = tf.nn.sigmoid(x_recon, name='x_recon')
         gen_loss = -tf.reduce_mean(tf.reduce_sum(x * tf.log(tf.maximum(x_recon, 1e-10))
-                                                 + (1 - x) * tf.log(tf.maximum(1 - x_recon, 1e-10)), 1))
+            + (1-x) * tf.log(tf.maximum(1 - x_recon, 1e-10)),1))
         latent_loss = 0.5 * tf.reduce_mean(tf.reduce_sum(tf.square(z_mean) + tf.exp(z_log_sigma_sq)
-                                                         - z_log_sigma_sq - 1, 1))
+            - z_log_sigma_sq - 1, 1))
         loss = gen_loss + latent_loss
         train_op = tf.train.AdamOptimizer(lr).minimize(loss)
         sess.run(tf.global_variables_initializer())
         for i in range(epoch):
             for it in range(num_iter):
                 b_x, ids = utils.get_batch(data_x, batch_size)
-                _, l, gl, ll = sess.run(
-                    (train_op, loss, gen_loss, latent_loss), feed_dict={x: b_x})
+                _, l, gl, ll = sess.run((train_op, loss, gen_loss, latent_loss), feed_dict={x: b_x})
             if (i + 1) % print_step == 0:
-                logging.info(
-                    'epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}'.format(i, l, gl, ll))
+                logging.info('epoch {0}: batch loss = {1}, gen_loss={2}, latent_loss={3}'.format(i, l, gl, ll))
 
         self.weights.append(sess.run(rec['W_z_mean']))
         self.weights.append(sess.run(rec['W_z_log_sigma']))
@@ -254,9 +252,9 @@ class VariationalAutoEncoder:
         x_ = tf.placeholder(dtype=tf.float32, shape=[
                             None, input_dim], name='x_')
         encode = {'weights': tf.Variable(xavier_init(input_dim, hidden_dim, dtype=tf.float32)),
-                  'biases': tf.Variable(tf.zeros([hidden_dim],
-                                                 dtype=tf.float32))}
-        decode = {'biases': tf.Variable(tf.zeros([input_dim], dtype=tf.float32)),
+            'biases': tf.Variable(tf.zeros([hidden_dim],
+                                                      dtype=tf.float32))}
+        decode = {'biases': tf.Variable(tf.zeros([input_dim],dtype=tf.float32)),
                   'weights': tf.transpose(encode['weights'])}
         encoded = self.activate(
             tf.matmul(x, encode['weights']) + encode['biases'], activation)
@@ -269,8 +267,7 @@ class VariationalAutoEncoder:
         elif loss == 'cross-entropy':
             decoded = tf.nn.sigmoid(decoded, name='decoded')
             # loss = -tf.reduce_mean(x_ * tf.log(decoded))
-            loss = -tf.reduce_mean(tf.reduce_sum(x_ * tf.log(tf.maximum(decoded, 1e-16)) + (
-                1 - x_) * tf.log(tf.maximum(1 - decoded, 1e-16)), 1))
+            loss = -tf.reduce_mean(tf.reduce_sum(x_ * tf.log(tf.maximum(decoded, 1e-16)) + (1-x_)*tf.log(tf.maximum(1-decoded, 1e-16)), 1))
         train_op = tf.train.AdamOptimizer(lr).minimize(loss)
 
         sess.run(tf.global_variables_initializer())
